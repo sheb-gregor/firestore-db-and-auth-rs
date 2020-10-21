@@ -5,8 +5,8 @@
 use super::credentials;
 use super::errors::{extract_google_api_error, FirebaseError};
 use super::jwt::{
-    create_jwt, is_expired, jwt_update_expiry_if, verify_access_token, AuthClaimsJWT, JWT_AUDIENCE_FIRESTORE,
-    JWT_AUDIENCE_IDENTITY,
+    create_jwt, is_expired, jwt_update_expiry_if, verify_access_token, AuthClaimsJWT,
+    JWT_AUDIENCE_FIRESTORE, JWT_AUDIENCE_IDENTITY,
 };
 use super::FirebaseAuthBearer;
 
@@ -18,7 +18,9 @@ use std::slice::Iter;
 
 pub mod user {
     use super::*;
+    use crate::jwt::{create_jwt_with_claims, JwtOAuthPrivateClaims};
     use credentials::Credentials;
+    use serde::de::DeserializeOwned;
 
     #[inline]
     fn token_endpoint(v: &str) -> String {
@@ -65,13 +67,14 @@ pub mod user {
 
             if is_expired(&jwt, 0).unwrap() {
                 // Unwrap: the token is always valid at this point
-                if let Ok(response) = get_new_access_token(&self.api_key, jwt) {
-                    self.access_token_.swap(&RefCell::new(response.id_token.clone()));
-                    return response.id_token;
+                return if let Ok(response) = get_new_access_token(&self.api_key, jwt) {
+                    self.access_token_
+                        .swap(&RefCell::new(response.id_token.clone()));
+                    response.id_token
                 } else {
                     // Failed to refresh access token. Return an empty string
-                    return String::new();
-                }
+                    String::new()
+                };
             }
             jwt.to_owned()
         }
@@ -95,7 +98,10 @@ pub mod user {
         api_key: &str,
         refresh_token: &str,
     ) -> Result<RefreshTokenToAccessTokenResponse, FirebaseError> {
-        let request_body = vec![("grant_type", "refresh_token"), ("refresh_token", refresh_token)];
+        let request_body = vec![
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ];
 
         let url = refresh_to_access_endpoint(api_key);
         let client = reqwest::blocking::Client::new();
@@ -197,8 +203,12 @@ pub mod user {
         /// - `refresh_token` A refresh token.
         ///
         /// Async support: This is a blocking operation.
-        pub fn by_refresh_token(credentials: &Credentials, refresh_token: &str) -> Result<Session, FirebaseError> {
-            let r: RefreshTokenToAccessTokenResponse = get_new_access_token(&credentials.api_key, refresh_token)?;
+        pub fn by_refresh_token(
+            credentials: &Credentials,
+            refresh_token: &str,
+        ) -> Result<Session, FirebaseError> {
+            let r: RefreshTokenToAccessTokenResponse =
+                get_new_access_token(&credentials.api_key, refresh_token)?;
             Ok(Session {
                 user_id: r.user_id,
                 access_token_: RefCell::new(r.id_token),
@@ -225,19 +235,31 @@ pub mod user {
             with_refresh_token: bool,
         ) -> Result<Session, FirebaseError> {
             let scope: Option<Iter<String>> = None;
-            let jwt = create_jwt(
+
+            let claims = JwtOAuthPrivateClaims::new(scope, None, Some(user_id.to_owned()));
+
+            Self::by_user_id_with_claims(credentials, user_id, with_refresh_token, claims)
+        }
+
+        pub fn by_user_id_with_claims<T: Serialize + DeserializeOwned>(
+            credentials: &Credentials,
+            user_id: &str,
+            with_refresh_token: bool,
+            claims: T,
+        ) -> Result<Session, FirebaseError> {
+            let jwt = create_jwt_with_claims(
                 &credentials,
-                scope,
                 Duration::hours(1),
-                None,
-                Some(user_id.to_owned()),
                 JWT_AUDIENCE_IDENTITY,
+                claims,
             )?;
             let secret = credentials
                 .keys
                 .secret
                 .as_ref()
-                .ok_or(FirebaseError::Generic("No private key added via add_keypair_key!"))?;
+                .ok_or(FirebaseError::Generic(
+                    "No private key added via add_keypair_key!",
+                ))?;
             let encoded = jwt.encode(&secret.deref())?.encoded()?.encode();
 
             let resp = reqwest::blocking::Client::new()
@@ -258,7 +280,10 @@ pub mod user {
             })
         }
 
-        pub fn by_access_token(credentials: &Credentials, firebase_tokenid: &str) -> Result<Session, FirebaseError> {
+        pub fn by_access_token(
+            credentials: &Credentials,
+            firebase_tokenid: &str,
+        ) -> Result<Session, FirebaseError> {
             let result = verify_access_token(&credentials, firebase_tokenid)?;
             Ok(Session {
                 user_id: result.subject,
@@ -353,7 +378,9 @@ pub mod service_account {
                 .keys
                 .secret
                 .as_ref()
-                .ok_or(FirebaseError::Generic("No private key added via add_keypair_key!"))?;
+                .ok_or(FirebaseError::Generic(
+                    "No private key added via add_keypair_key!",
+                ))?;
             let encoded = jwt.encode(&secret.deref())?.encoded()?.encode();
 
             Ok(Session {

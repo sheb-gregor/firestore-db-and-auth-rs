@@ -2,7 +2,7 @@
 
 use super::credentials::Credentials;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, de::DeserializeOwned, Serialize};
 
 use chrono::{Duration, Utc};
 use std::collections::HashSet;
@@ -27,6 +27,29 @@ pub struct JwtOAuthPrivateClaims {
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uid: Option<String>, // Probably the firebase User ID if set
+}
+
+use std::ops::Add;
+use std::str::FromStr;
+
+impl JwtOAuthPrivateClaims {
+    pub fn new<S: AsRef<str>>(
+        scope: Option<Iter<S>>,
+        client_id: Option<String>,
+        user_id: Option<String>) -> Self {
+
+
+        JwtOAuthPrivateClaims {
+            scope: scope.and_then(|f| {
+                Some(f.fold(String::new(), |acc, x| {
+                    let x: &str = x.as_ref();
+                    return acc + x + " ";
+                }))
+            }),
+            client_id,
+            uid: user_id,
+        }
+    }
 }
 
 pub(crate) type AuthClaimsJWT = biscuit::JWT<JwtOAuthPrivateClaims, biscuit::Empty>;
@@ -131,15 +154,27 @@ pub(crate) fn create_jwt<S>(
     user_id: Option<String>,
     audience: &str,
 ) -> Result<AuthClaimsJWT, Error>
-where
-    S: AsRef<str>,
+    where
+        S: AsRef<str>,
 {
-    use std::ops::Add;
-    use std::str::FromStr;
+    let claims = JwtOAuthPrivateClaims::new(scope, client_id, user_id);
 
+    create_jwt_with_claims(credentials, duration, audience, claims)
+}
+
+
+pub(crate) fn create_jwt_with_claims<T>(
+    credentials: &Credentials,
+    duration: chrono::Duration,
+    audience: &str,
+    claims: T,
+) -> Result<biscuit::JWT<T, biscuit::Empty>, Error>
+    where
+        T: Serialize + DeserializeOwned,
+{
     use biscuit::{
         jws::{Header, RegisteredHeader},
-        ClaimsSet, Empty, RegisteredClaims, JWT,
+        ClaimsSet, Empty, RegisteredClaims,
     };
 
     let header: Header<Empty> = Header::from(RegisteredHeader {
@@ -147,27 +182,19 @@ where
         key_id: Some(credentials.private_key_id.to_owned()),
         ..Default::default()
     });
-    let expected_claims = ClaimsSet::<JwtOAuthPrivateClaims> {
+
+    let expected_claims = ClaimsSet::<T> {
         registered: RegisteredClaims {
             issuer: Some(FromStr::from_str(&credentials.client_email)?),
             audience: Some(SingleOrMultiple::Single(StringOrUri::from_str(audience)?)),
-            subject: Some(StringOrUri::from_str(&credentials.client_email)?),
             expiry: Some(biscuit::Timestamp::from(Utc::now().add(duration))),
+            subject: Some(StringOrUri::from_str(&credentials.client_email)?),
             issued_at: Some(biscuit::Timestamp::from(Utc::now())),
             ..Default::default()
         },
-        private: JwtOAuthPrivateClaims {
-            scope: scope.and_then(|f| {
-                Some(f.fold(String::new(), |acc, x| {
-                    let x: &str = x.as_ref();
-                    return acc + x + " ";
-                }))
-            }),
-            client_id,
-            uid: user_id,
-        },
+        private: claims,
     };
-    Ok(JWT::new_decoded(header, expected_claims))
+    Ok(biscuit::JWT::new_decoded(header, expected_claims))
 }
 
 pub struct TokenValidationResult {
