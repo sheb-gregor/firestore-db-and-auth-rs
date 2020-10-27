@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use super::jwt::{create_jwt_encoded, download_google_jwks, verify_access_token, JWKSetDTO, JWT_AUDIENCE_IDENTITY};
 use crate::errors::FirebaseError;
+use crate::oauth2;
 
 type Error = super::errors::FirebaseError;
 
@@ -41,8 +42,11 @@ pub struct Credentials {
     pub client_email: String,
     pub client_id: String,
     pub api_key: String,
+
     #[serde(default, skip)]
     pub(crate) keys: Keys,
+    #[serde(default, skip)]
+    pub(crate) oauth_token: oauth2::Token,
 }
 
 /// Converts a PEM (ascii base64) encoded private key into the binary der representation
@@ -104,7 +108,7 @@ impl Credentials {
     ///
     /// let c : Credentials = Credentials::new(include_str!("../firebase-service-account.json"),
     ///                                         &[include_str!("../tests/service-account-for-tests.jwks")])?;
-    /// # Ok::<(), firestore_db_and_auth::errors::FirebaseError>(())
+    /// # Ok::<(), firestore_db_and_auth::errors::FirebaseError>(());
     /// ```
     ///
     /// You need two JWKS files for this crate to work:
@@ -117,6 +121,7 @@ impl Credentials {
         }
         credentials.compute_secret()?;
         credentials.verify()?;
+        credentials.oauth_token = credentials.get_oauth_token()?;
         Ok(credentials)
     }
 
@@ -147,6 +152,7 @@ impl Credentials {
         let mut credentials: Credentials = serde_json::from_slice(buffer.as_slice())?;
         credentials.compute_secret()?;
         credentials.download_google_jwks()?;
+        credentials.oauth_token = credentials.get_oauth_token()?;
         Ok(credentials)
     }
 
@@ -205,5 +211,23 @@ impl Credentials {
             self.add_jwks_public_keys(jwks);
         }
         Ok(())
+    }
+
+    pub fn get_oauth_token(&self) -> Result<oauth2::Token, Error> {
+        // Generate the assertion from the admin credentials
+        let assertion = create_jwt_encoded(&self,
+                                           Some(oauth2::user_scope_list().iter()),
+                                           chrono::Duration::hours(1),
+                                           Some(self.client_id.clone()),
+                                           Some(self.client_email.clone()),
+                                           oauth2::JWT_AUDIENCE_OAUTH)?;
+
+        // Request Google Oauth2 to retrieve the access token in order to create a session cookie
+        let client = reqwest::blocking::Client::new();
+        let response: oauth2::Token = client.post(oauth2::GOOGLE_OAUTH_URL)
+            .form(&oauth2::request_form(assertion))
+            .send()?
+            .json()?;
+        Ok(response)
     }
 }
