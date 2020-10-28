@@ -1,6 +1,6 @@
 [package]
 name = "firestore-db-and-auth"
-version = "0.6.1"
+version = "0.6.2"
 authors = ["David Gräff <david.graeff@web.de>"]
 edition = "2018"
 license = "MIT"
@@ -8,7 +8,7 @@ description = "This crate allows easy access to your Google Firestore DB via ser
 readme = "readme.md"
 keywords = ["firestore", "auth"]
 categories = ["api-bindings","authentication"]
-maintenance = { status = "passively-maintained" }
+#maintenance = { status = "passively-maintained" }
 repository = "https://github.com/davidgraeff/firestore-db-and-auth-rs"
 
 [dependencies]
@@ -19,7 +19,6 @@ chrono = { version = "0.4", features = ["serde"] }
 biscuit = "0.4"
 ring = "0.16"
 base64 = "0.11"
-jsonwebtoken = "7"
 
 [dependencies.rocket]
 version = "0.4.2"

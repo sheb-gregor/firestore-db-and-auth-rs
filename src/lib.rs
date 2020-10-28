@@ -1,4 +1,6 @@
 #![deny(warnings)]
+// #![allow(unused_imports)]
+// #![allow(dead_code)]
 #![cfg_attr(feature = "external_doc", feature(external_doc))]
 #![cfg_attr(feature = "external_doc", doc(include = "../readme.md"))]
 
@@ -8,6 +10,7 @@ pub mod dto;
 pub mod errors;
 pub mod firebase_rest_to_rust;
 pub mod jwt;
+pub mod oauth2;
 pub mod sessions;
 pub mod users;
 
@@ -34,6 +37,8 @@ pub trait FirebaseAuthBearer {
     fn access_token(&self) -> String;
     /// The access token, unchecked. Might be expired or in other ways invalid.
     fn access_token_unchecked(&self) -> String;
+    /// Returns OAuth2 access token for current session.
+    // fn oauth_access_token(&self) -> String;
     /// The reqwest http client.
     /// The `Client` holds a connection pool internally, so it is advised that it is reused for multiple, successive connections.
     fn client(&self) -> &reqwest::blocking::Client;

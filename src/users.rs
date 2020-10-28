@@ -2,12 +2,15 @@
 //!
 //! Retrieve firebase user information
 
-use super::errors::{extract_google_api_error, Result};
-
-use super::sessions::{service_account, user};
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use serde::de::DeserializeOwned;
 
 use crate::FirebaseAuthBearer;
+use crate::errors::FirebaseError;
+use super::errors::{extract_google_api_error, Result};
+use super::sessions::{service_account, user};
 
 /// A federated services like Facebook, Github etc that the user has used to
 /// authenticated himself and that he associated with this firebase auth account.
@@ -39,14 +42,23 @@ pub struct FirebaseAuthUser {
     pub lastLoginAt: Option<String>,
     /// Created datetime in UTC
     pub createdAt: Option<String>,
-    /// True if email/password login have been used
-    pub customAuth: Option<bool>,
+    /// Serialized JSON with custom JWT claims
+    pub customAttributes: Option<String>,
+}
+
+impl FirebaseAuthUser {
+    pub fn custom_claims<T: DeserializeOwned + Default>(&self) -> Result<T> {
+        let attr = self.customAttributes.clone();
+        match attr {
+            Some(s) => Ok(serde_json::from_str(&s)?),
+            None => Ok(T::default())
+        }
+    }
 }
 
 /// Your user information query might return zero, one or more [`FirebaseAuthUser`] structures.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct FirebaseAuthUserResponse {
-    pub kind: String,
     pub users: Vec<FirebaseAuthUser>,
 }
 
@@ -56,9 +68,60 @@ struct UserRequest {
     pub idToken: String,
 }
 
+#[allow(non_snake_case)]
+#[derive(Serialize, Default, Clone, Debug)]
+struct UserUpdateRequest {
+    localId: String,
+    returnSecureToken: bool,
+    #[serde(flatten)]
+    data: HashMap<String, String>,
+}
+
+impl UserUpdateRequest {
+    const MAX_CUSTOM_CLAIM_PAYLOAD: usize = 1000;
+
+    fn new(user_id: &str) -> Self {
+        UserUpdateRequest {
+            returnSecureToken: true,
+            localId: user_id.to_string(),
+            data: HashMap::new(),
+        }
+    }
+
+    fn update_custom_claims<T: Serialize>(&mut self, claims: T) -> Result<Self> {
+        let serialized = serde_json::to_string(&claims)?;
+
+        if serialized.len() > Self::MAX_CUSTOM_CLAIM_PAYLOAD {
+            return Err(FirebaseError::Generic("claim exceeded max payload length"));
+        }
+
+        let deserialized: HashMap<&str, Value> = serde_json::de::from_str(&serialized)?;
+        for &name in reserved_claims().iter() {
+            if deserialized.contains_key(name) {
+                return Err(FirebaseError::Generic("claim is reserved and must not be set"));
+            }
+        }
+
+        self.data.insert("customAttributes".to_string(), serialized);
+        Ok(self.to_owned())
+    }
+}
+
 #[inline]
-fn firebase_auth_url(v: &str, v2: &str) -> String {
-    format!("https://identitytoolkit.googleapis.com/v1/accounts:{}?key={}", v, v2)
+fn firebase_auth_url(action: &str, key: &str) -> String {
+    format!("https://identitytoolkit.googleapis.com/v1/accounts:{}?key={}", action, key)
+}
+
+#[inline]
+fn firebase_auth_project_url(action: &str, project: &str, key: &str) -> String {
+    format!("https://identitytoolkit.googleapis.com/v1/projects/{}/accounts:{}?key={}", project, action, key)
+}
+
+
+#[inline]
+fn reserved_claims() -> [&'static str; 16] {
+    ["acr", "amr", "at_hash", "aud", "auth_time", "azp", "cnf", "c_hash",
+        "exp", "firebase", "iat", "iss", "jti", "nbf", "nonce", "sub", ]
 }
 
 /// Retrieve information about the firebase auth user associated with the given user session
@@ -81,6 +144,27 @@ pub fn user_info(session: &user::Session) -> Result<FirebaseAuthUserResponse> {
 
     Ok(resp.json()?)
 }
+
+/// Updates the firebase auth user data associated with the given user session
+///
+/// Error codes:
+/// - INVALID_ID_TOKEN
+/// - USER_NOT_FOUND
+pub fn user_set_claims<T: Serialize>(session: &service_account::Session, user_id: &str, claims: T) -> Result<()> {
+    let req = UserUpdateRequest::new(user_id.clone()).update_custom_claims(claims)?;
+
+    let url = firebase_auth_project_url("update", &session.credentials.project_id,&session.credentials.api_key);
+    let resp = session
+        .client()
+        .post(&url)
+        .bearer_auth(session.oauth_access_token().to_owned())
+        .json(&req)
+        .send()?;
+
+    extract_google_api_error(resp, || user_id.to_owned())?;
+    Ok({})
+}
+
 
 /// Removes the firebase auth user associated with the given user session
 ///
@@ -114,6 +198,13 @@ struct SignInUpUserResponse {
 struct SignInUpUserRequest {
     pub email: String,
     pub password: String,
+    pub returnSecureToken: bool,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize)]
+struct SignInCustom {
+    pub token: String,
     pub returnSecureToken: bool,
 }
 
@@ -160,4 +251,33 @@ pub fn sign_up(session: &service_account::Session, email: &str, password: &str) 
 /// USER_DISABLED: The user account has been disabled by an administrator.
 pub fn sign_in(session: &service_account::Session, email: &str, password: &str) -> Result<user::Session> {
     sign_up_in(session, email, password, "signInWithPassword")
+}
+
+/// Signs in with the given custom JWT and returns a user session.
+///
+/// Error codes:
+/// EMAIL_NOT_FOUND: There is no user record corresponding to this identifier. The user may have been deleted.
+/// INVALID_PASSWORD: The password is invalid or the user does not have a password.
+/// USER_DISABLED: The user account has been disabled by an administrator.
+pub fn sign_in_with_custom_jwt(session: &service_account::Session, token: &str) -> Result<user::Session> {
+    let url = firebase_auth_url("signInWithCustomToken", &session.credentials.api_key);
+    let resp = session
+        .client()
+        .post(&url)
+        .json(&SignInCustom {
+            token: token.to_owned(),
+            returnSecureToken: true,
+        })
+        .send()?;
+
+    let resp = extract_google_api_error(resp, || "signInWithCustomToken".to_owned())?;
+
+    let resp: SignInUpUserResponse = resp.json()?;
+
+    Ok(user::Session::new(
+        &session.credentials,
+        Some(&resp.localId),
+        Some(&resp.idToken),
+        Some(&resp.refreshToken),
+    )?)
 }

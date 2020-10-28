@@ -2,7 +2,7 @@
 
 use super::credentials::Credentials;
 
-use serde::{Deserialize, de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use chrono::{Duration, Utc};
 use std::collections::HashSet;
@@ -15,9 +15,19 @@ use std::ops::Deref;
 
 type Error = super::errors::FirebaseError;
 
-pub static JWT_AUDIENCE_FIRESTORE: &str = "https://firestore.googleapis.com/google.firestore.v1.Firestore";
+pub static JWT_AUDIENCE_FIRESTORE: &str =
+    "https://firestore.googleapis.com/google.firestore.v1.Firestore";
 pub static JWT_AUDIENCE_IDENTITY: &str =
     "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit";
+
+pub trait PrivateClaims
+    where
+        Self: Serialize + DeserializeOwned + Clone + Default,
+{
+    fn get_scopes(&self) -> HashSet<String>;
+    fn get_client_id(&self) -> Option<String>;
+    fn get_uid(&self) -> Option<String>;
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct JwtOAuthPrivateClaims {
@@ -36,9 +46,8 @@ impl JwtOAuthPrivateClaims {
     pub fn new<S: AsRef<str>>(
         scope: Option<Iter<S>>,
         client_id: Option<String>,
-        user_id: Option<String>) -> Self {
-
-
+        user_id: Option<String>,
+    ) -> Self {
         JwtOAuthPrivateClaims {
             scope: scope.and_then(|f| {
                 Some(f.fold(String::new(), |acc, x| {
@@ -49,6 +58,23 @@ impl JwtOAuthPrivateClaims {
             client_id,
             uid: user_id,
         }
+    }
+}
+
+impl PrivateClaims for JwtOAuthPrivateClaims {
+    fn get_scopes(&self) -> HashSet<String> {
+        match self.scope {
+            Some(ref v) => v.split(" ").map(|f| f.to_owned()).collect(),
+            None => HashSet::new(),
+        }
+    }
+
+    fn get_client_id(&self) -> Option<String> {
+        self.client_id.clone()
+    }
+
+    fn get_uid(&self) -> Option<String> {
+        self.uid.clone()
     }
 }
 
@@ -96,27 +122,14 @@ pub async fn download_google_jwks_async(account_mail: &str) -> Result<JWKSetDTO,
     Ok(jwk_set)
 }
 
-pub(crate) fn create_jwt_encoded<S: AsRef<str>>(
-    credentials: &Credentials,
-    scope: Option<Iter<S>>,
-    duration: chrono::Duration,
-    client_id: Option<String>,
-    user_id: Option<String>,
-    audience: &str,
-) -> Result<String, Error> {
-    let jwt = create_jwt(credentials, scope, duration, client_id, user_id, audience)?;
-    let secret = credentials
-        .keys
-        .secret
-        .as_ref()
-        .ok_or(Error::Generic("No private key added via add_keypair_key!"))?;
-    Ok(jwt.encode(&secret.deref())?.encoded()?.encode())
-}
 
 /// Returns true if the access token (assumed to be a jwt) has expired
 ///
 /// An error is returned if the given access token string is not a jwt
-pub(crate) fn is_expired(access_token: &str, tolerance_in_minutes: i64) -> Result<bool, FirebaseError> {
+pub(crate) fn is_expired(
+    access_token: &str,
+    tolerance_in_minutes: i64,
+) -> Result<bool, FirebaseError> {
     let token = AuthClaimsJWT::new_encoded(&access_token);
     let claims = token.unverified_payload()?;
     if let Some(expiry) = claims.registered.expiry.as_ref() {
@@ -162,8 +175,24 @@ pub(crate) fn create_jwt<S>(
     create_jwt_with_claims(credentials, duration, audience, claims)
 }
 
+pub(crate) fn create_jwt_encoded<S: AsRef<str>>(
+    credentials: &Credentials,
+    scope: Option<Iter<S>>,
+    duration: chrono::Duration,
+    client_id: Option<String>,
+    user_id: Option<String>,
+    audience: &str,
+) -> Result<String, Error> {
+    let jwt = create_jwt(credentials, scope, duration, client_id, user_id, audience)?;
+    let secret = credentials
+        .keys
+        .secret
+        .as_ref()
+        .ok_or(Error::Generic("No private key added via add_keypair_key!"))?;
+    Ok(jwt.encode(&secret.deref())?.encoded()?.encode())
+}
 
-pub(crate) fn create_jwt_with_claims<T>(
+pub fn create_jwt_with_claims<T>(
     credentials: &Credentials,
     duration: chrono::Duration,
     audience: &str,
@@ -197,18 +226,35 @@ pub(crate) fn create_jwt_with_claims<T>(
     Ok(biscuit::JWT::new_decoded(header, expected_claims))
 }
 
-pub struct TokenValidationResult {
-    pub claims: JwtOAuthPrivateClaims,
+pub fn create_custom_jwt_encoded<T: PrivateClaims>(
+    credentials: &Credentials,
+    audience: &str,
+    claims: T) -> Result<String, Error> {
+    let jwt = create_jwt_with_claims(
+        &credentials,
+        Duration::hours(1),
+        audience,
+        claims,
+    )?;
+    let secret = credentials
+        .keys
+        .secret
+        .as_ref()
+        .ok_or(FirebaseError::Generic(
+            "No private key added via add_keypair_key!",
+        ))?;
+    Ok(jwt.encode(&secret.deref())?.encoded()?.encode())
+}
+
+pub struct TokenValidationResult<T: PrivateClaims = JwtOAuthPrivateClaims> {
+    pub claims: T,
     pub audience: String,
     pub subject: String,
 }
 
 impl TokenValidationResult {
     pub fn get_scopes(&self) -> HashSet<String> {
-        match self.claims.scope {
-            Some(ref v) => v.split(" ").map(|f| f.to_owned()).collect(),
-            None => HashSet::new(),
-        }
+        self.claims.get_scopes()
     }
 }
 
@@ -216,7 +262,14 @@ pub(crate) fn verify_access_token(
     credentials: &Credentials,
     access_token: &str,
 ) -> Result<TokenValidationResult, Error> {
-    let token = AuthClaimsJWT::new_encoded(&access_token);
+    verify_access_token_with_claims(credentials, access_token)
+}
+
+pub fn verify_access_token_with_claims<T: PrivateClaims>(
+    credentials: &Credentials,
+    access_token: &str,
+) -> Result<TokenValidationResult<T>, Error> {
+    let token = biscuit::JWT::<T, biscuit::Empty>::new_encoded(&access_token);
 
     let header = token.unverified_header()?;
     let kid = header

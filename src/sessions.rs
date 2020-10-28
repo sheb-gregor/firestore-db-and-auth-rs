@@ -20,8 +20,6 @@ pub mod user {
     use super::*;
     use crate::jwt::{create_jwt_with_claims, JwtOAuthPrivateClaims};
     use credentials::Credentials;
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use jsonwebtoken::{Algorithm, encode, EncodingKey, Header};
     use serde::de::DeserializeOwned;
 
     #[inline]
@@ -84,6 +82,11 @@ pub mod user {
         fn access_token_unchecked(&self) -> String {
             self.access_token_.borrow().clone()
         }
+
+        // fn oauth_access_token(&self) -> String {
+        //     unimplemented!()
+        //     // self.credentials.oauth_token.access_token.clone()
+        // }
 
         fn client(&self) -> &reqwest::blocking::Client {
             &self.client
@@ -151,22 +154,6 @@ pub mod user {
     struct SessionLogin {
         idToken: String,
         validDuration: u64,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct Oauth2Response {
-        access_token: String,
-        expires_in: u64,
-        token_type: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct Claims {
-        scope: String,
-        aud: String,
-        exp: u64,
-        iat: u64,
-        iss: String,
     }
 
     #[derive(Debug, Deserialize)]
@@ -333,53 +320,27 @@ pub mod user {
         }
 
         pub fn create_session_cookie(credentials: &Credentials, id_token: String, duration: u64) -> Result<CreateSessionCookie, FirebaseError> {
-            let scope_list = vec![
-                "https://www.googleapis.com/auth/cloud-platform".to_string(),
-                "https://www.googleapis.com/auth/firebase.database".to_string(),
-                "https://www.googleapis.com/auth/firebase.messaging".to_string(),
-                "https://www.googleapis.com/auth/identitytoolkit".to_string(),
-                "https://www.googleapis.com/auth/userinfo.email".to_string(),
-            ];
-
-            // Generate the assertion from the admin credentials
-            let iat  = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            let assertion = encode(&Header::new(Algorithm::RS256),
-                                   &Claims {
-                                       scope: scope_list.join(" "),
-                                       aud: "https://accounts.google.com/o/oauth2/token".to_string(),
-                                       iat,
-                                       exp : iat + duration,
-                                       iss: credentials.client_email.to_string(),
-                                   },
-                                   &EncodingKey::from_rsa_pem(credentials.private_key.to_string().as_ref()).unwrap())
-                .unwrap();
-
-            // Request Google Oauth2 to retrieve the access token in order to create a session cookie
-            let client = reqwest::blocking::Client::new();
-            let google_oauth2_url = "https://accounts.google.com/o/oauth2/token".to_string();
-            let response_oauth2: Oauth2Response = client.post(&google_oauth2_url)
-                .form(&[("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"), ("assertion", &assertion)])
-                .send()
-                .unwrap()
-                .json()
-                .unwrap();
+            let duration = chrono::Duration::seconds(duration as i64);
+            let oauth_token = credentials.get_oauth_token()?;
 
             // Create a session cookie with the access token previously retrieved
-            let create_session_cookie_url: String = "https://identitytoolkit.googleapis.com/v1/projects/arenel:createSessionCookie".to_string();
+            let create_session_cookie_url: String = format!(
+                "https://identitytoolkit.googleapis.com/v1/projects/{}:createSessionCookie",
+                credentials.project_id).to_string();
+
+            let client = reqwest::blocking::Client::new();
             let response_session_cookie_json: CreateSessionCookieResponseJson = client.post(&create_session_cookie_url)
-                .bearer_auth(&response_oauth2.access_token)
+                .bearer_auth(&oauth_token.access_token)
                 .json(&SessionLogin {
                     idToken: id_token,
-                    validDuration: duration,
+                    validDuration: duration.num_seconds() as u64,
                 })
-                .send()
-                .unwrap()
-                .json()
-                .unwrap();
+                .send()?
+                .json()?;
 
 
             Ok(CreateSessionCookie {
-                session_cookie : response_session_cookie_json.sessionCookie
+                session_cookie: response_session_cookie_json.sessionCookie
             })
         }
     }
@@ -404,6 +365,9 @@ pub mod service_account {
         pub client_async: reqwest::Client,
         jwt: RefCell<AuthClaimsJWT>,
         access_token_: RefCell<String>,
+        /// The refresh token, if any. Such a token allows you to generate new, valid access tokens.
+        /// This library will handle this for you, if for example your current access token expired.
+        pub refresh_token: Option<String>,
     }
 
     impl super::FirebaseAuthBearer for Session {
@@ -431,6 +395,11 @@ pub mod service_account {
         fn access_token_unchecked(&self) -> String {
             self.access_token_.borrow().clone()
         }
+        //
+        // fn oauth_access_token(&self) -> String {
+        //     self.credentials.oauth_token.access_token.clone()
+        // }
+
 
         fn client(&self) -> &reqwest::blocking::Client {
             &self.client
@@ -473,10 +442,15 @@ pub mod service_account {
             Ok(Session {
                 access_token_: RefCell::new(encoded),
                 jwt: RefCell::new(jwt),
+                refresh_token: None,
                 credentials,
                 client: reqwest::blocking::Client::new(),
                 client_async: reqwest::Client::new(),
             })
+        }
+
+       pub fn oauth_access_token(&self) -> String {
+            self.credentials.oauth_token.access_token.clone()
         }
     }
 }
