@@ -8,9 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Add Custom Claims support for user JWT.
+- Add Custom Claims support for user's JWT.
 - Add possibility to get of OAuth2 token by credentials.
-- Add `user_set_claims`.
+- Add possibility to change default custom claims by `user_set_claims`.
+- Add possibility to create JWT with custom claims and login with custom token
 
 
 ## [0.6] - 2020-01-22

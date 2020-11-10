@@ -1,17 +1,17 @@
 //! # A Firestore Auth Session token is a Javascript Web Token (JWT). This module contains JWT helper functions.
 
-use super::credentials::Credentials;
-
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
-use chrono::{Duration, Utc};
-use std::collections::HashSet;
-use std::slice::Iter;
-
+use crate::credentials::Credentials;
 use crate::errors::FirebaseError;
 use biscuit::jwa::SignatureAlgorithm;
 use biscuit::{ClaimPresenceOptions, SingleOrMultiple, StringOrUri, ValidationOptions};
+use chrono::{Duration, Utc};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::ops::Add;
 use std::ops::Deref;
+use std::slice::Iter;
+use std::str::FromStr;
 
 type Error = super::errors::FirebaseError;
 
@@ -21,8 +21,8 @@ pub static JWT_AUDIENCE_IDENTITY: &str =
     "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit";
 
 pub trait PrivateClaims
-    where
-        Self: Serialize + DeserializeOwned + Clone + Default,
+where
+    Self: Serialize + DeserializeOwned + Clone + Default,
 {
     fn get_scopes(&self) -> HashSet<String>;
     fn get_client_id(&self) -> Option<String>;
@@ -38,9 +38,6 @@ pub struct JwtOAuthPrivateClaims {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uid: Option<String>, // Probably the firebase User ID if set
 }
-
-use std::ops::Add;
-use std::str::FromStr;
 
 impl JwtOAuthPrivateClaims {
     pub fn new<S: AsRef<str>>(
@@ -75,6 +72,39 @@ impl PrivateClaims for JwtOAuthPrivateClaims {
 
     fn get_uid(&self) -> Option<String> {
         self.uid.clone()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct JwtCustomClaims {
+    pub uid: String,
+    pub claims: HashMap<String, Value>,
+}
+
+impl JwtCustomClaims {
+    pub fn new<T: Serialize>(uid: &str, claims: T) -> Self {
+        let dev_claims = {
+            let val = serde_json::to_string(&claims).unwrap_or("".to_string());
+            serde_json::from_str::<HashMap<String, Value>>(&val).unwrap_or_default()
+        };
+        JwtCustomClaims {
+            claims: dev_claims,
+            uid: uid.to_string(),
+        }
+    }
+}
+
+impl PrivateClaims for JwtCustomClaims {
+    fn get_scopes(&self) -> HashSet<String> {
+        HashSet::new()
+    }
+
+    fn get_client_id(&self) -> Option<String> {
+        None
+    }
+
+    fn get_uid(&self) -> Option<String> {
+        Some(self.uid.clone())
     }
 }
 
@@ -122,7 +152,6 @@ pub async fn download_google_jwks_async(account_mail: &str) -> Result<JWKSetDTO,
     Ok(jwk_set)
 }
 
-
 /// Returns true if the access token (assumed to be a jwt) has expired
 ///
 /// An error is returned if the given access token string is not a jwt
@@ -167,8 +196,8 @@ pub(crate) fn create_jwt<S>(
     user_id: Option<String>,
     audience: &str,
 ) -> Result<AuthClaimsJWT, Error>
-    where
-        S: AsRef<str>,
+where
+    S: AsRef<str>,
 {
     let claims = JwtOAuthPrivateClaims::new(scope, client_id, user_id);
 
@@ -192,14 +221,14 @@ pub(crate) fn create_jwt_encoded<S: AsRef<str>>(
     Ok(jwt.encode(&secret.deref())?.encoded()?.encode())
 }
 
-pub fn create_jwt_with_claims<T>(
+fn create_jwt_with_claims<T>(
     credentials: &Credentials,
     duration: chrono::Duration,
     audience: &str,
     claims: T,
 ) -> Result<biscuit::JWT<T, biscuit::Empty>, Error>
-    where
-        T: Serialize + DeserializeOwned,
+where
+    T: Serialize + DeserializeOwned,
 {
     use biscuit::{
         jws::{Header, RegisteredHeader},
@@ -228,12 +257,12 @@ pub fn create_jwt_with_claims<T>(
 
 pub fn create_custom_jwt_encoded<T: PrivateClaims>(
     credentials: &Credentials,
-    audience: &str,
-    claims: T) -> Result<String, Error> {
+    claims: T,
+) -> Result<String, Error> {
     let jwt = create_jwt_with_claims(
         &credentials,
         Duration::hours(1),
-        audience,
+        JWT_AUDIENCE_IDENTITY,
         claims,
     )?;
     let secret = credentials

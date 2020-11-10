@@ -6,21 +6,18 @@ use super::credentials;
 use super::errors::{extract_google_api_error, FirebaseError};
 use super::jwt::{
     create_jwt, is_expired, jwt_update_expiry_if, verify_access_token, AuthClaimsJWT,
-    JWT_AUDIENCE_FIRESTORE, JWT_AUDIENCE_IDENTITY,
+    JWT_AUDIENCE_FIRESTORE,
 };
 use super::FirebaseAuthBearer;
 
-use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
-use std::ops::Deref;
 use std::slice::Iter;
 
 pub mod user {
     use super::*;
-    use crate::jwt::{create_jwt_with_claims, JwtOAuthPrivateClaims};
+    use crate::jwt::{create_custom_jwt_encoded, JwtOAuthPrivateClaims, PrivateClaims};
     use credentials::Credentials;
-    use serde::de::DeserializeOwned;
 
     #[inline]
     fn token_endpoint(v: &str) -> String {
@@ -264,26 +261,13 @@ pub mod user {
             Self::by_user_id_with_claims(credentials, user_id, with_refresh_token, claims)
         }
 
-        pub fn by_user_id_with_claims<T: Serialize + DeserializeOwned>(
+        pub fn by_user_id_with_claims<T: PrivateClaims>(
             credentials: &Credentials,
             user_id: &str,
             with_refresh_token: bool,
             claims: T,
         ) -> Result<Session, FirebaseError> {
-            let jwt = create_jwt_with_claims(
-                &credentials,
-                Duration::hours(1),
-                JWT_AUDIENCE_IDENTITY,
-                claims,
-            )?;
-            let secret = credentials
-                .keys
-                .secret
-                .as_ref()
-                .ok_or(FirebaseError::Generic(
-                    "No private key added via add_keypair_key!",
-                ))?;
-            let encoded = jwt.encode(&secret.deref())?.encoded()?.encode();
+            let encoded = create_custom_jwt_encoded(&credentials, claims)?;
 
             let resp = reqwest::blocking::Client::new()
                 .post(&token_endpoint(&credentials.api_key))
@@ -319,17 +303,24 @@ pub mod user {
             })
         }
 
-        pub fn create_session_cookie(credentials: &Credentials, id_token: String, duration: u64) -> Result<CreateSessionCookie, FirebaseError> {
+        pub fn create_session_cookie(
+            credentials: &Credentials,
+            id_token: String,
+            duration: u64,
+        ) -> Result<CreateSessionCookie, FirebaseError> {
             let duration = chrono::Duration::seconds(duration as i64);
             let oauth_token = credentials.get_oauth_token()?;
 
             // Create a session cookie with the access token previously retrieved
             let create_session_cookie_url: String = format!(
                 "https://identitytoolkit.googleapis.com/v1/projects/{}:createSessionCookie",
-                credentials.project_id).to_string();
+                credentials.project_id
+            )
+            .to_string();
 
             let client = reqwest::blocking::Client::new();
-            let response_session_cookie_json: CreateSessionCookieResponseJson = client.post(&create_session_cookie_url)
+            let response_session_cookie_json: CreateSessionCookieResponseJson = client
+                .post(&create_session_cookie_url)
                 .bearer_auth(&oauth_token.access_token)
                 .json(&SessionLogin {
                     idToken: id_token,
@@ -338,9 +329,8 @@ pub mod user {
                 .send()?
                 .json()?;
 
-
             Ok(CreateSessionCookie {
-                session_cookie: response_session_cookie_json.sessionCookie
+                session_cookie: response_session_cookie_json.sessionCookie,
             })
         }
     }
@@ -400,7 +390,6 @@ pub mod service_account {
         //     self.credentials.oauth_token.access_token.clone()
         // }
 
-
         fn client(&self) -> &reqwest::blocking::Client {
             &self.client
         }
@@ -449,7 +438,7 @@ pub mod service_account {
             })
         }
 
-       pub fn oauth_access_token(&self) -> String {
+        pub fn oauth_access_token(&self) -> String {
             self.credentials.oauth_token.access_token.clone()
         }
     }

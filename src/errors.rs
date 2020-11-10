@@ -60,7 +60,10 @@ impl std::convert::From<ring::error::KeyRejected> for FirebaseError {
 
 impl std::convert::From<serde_json::Error> for FirebaseError {
     fn from(error: serde_json::Error) -> Self {
-        FirebaseError::Ser { doc: None, ser: error }
+        FirebaseError::Ser {
+            doc: None,
+            ser: error,
+        }
     }
 }
 
@@ -195,11 +198,17 @@ fn extract_google_api_error_intern(
     http_body: String,
     context: impl Fn() -> String,
 ) -> FirebaseError {
-    let google_api_error_wrapper: std::result::Result<GoogleRESTApiErrorWrapper, serde_json::Error> =
-        serde_json::from_str(&http_body);
+    let google_api_error_wrapper: std::result::Result<
+        GoogleRESTApiErrorWrapper,
+        serde_json::Error,
+    > = serde_json::from_str(&http_body);
     if let Ok(google_api_error_wrapper) = google_api_error_wrapper {
         if let Some(google_api_error) = google_api_error_wrapper.error {
-            return FirebaseError::APIError(google_api_error.code, google_api_error.message.to_owned(), context());
+            return FirebaseError::APIError(
+                google_api_error.code,
+                google_api_error.message.to_owned(),
+                context(),
+            );
         }
     };
 
