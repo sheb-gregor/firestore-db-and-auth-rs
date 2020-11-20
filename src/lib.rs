@@ -1,6 +1,6 @@
-#![deny(warnings)]
-// #![allow(unused_imports)]
-// #![allow(dead_code)]
+// #![deny(warnings)]
+#![allow(unused_imports)]
+#![allow(dead_code)]
 #![cfg_attr(feature = "external_doc", feature(external_doc))]
 #![cfg_attr(feature = "external_doc", doc(include = "../readme.md"))]
 

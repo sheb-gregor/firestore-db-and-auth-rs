@@ -115,20 +115,26 @@ impl UserUpdateRequest {
         Ok(self.to_owned())
     }
 }
+pub(crate) fn auth_host() -> String {
+    match std::env::var("FIREBASE_AUTH_EMULATOR_HOST") {
+        Ok(v) => format!("http://{}/identitytoolkit.googleapis.com", v),
+        Err(_) => "https://firestore.googleapis.com".to_string(),
+    }
+}
 
 #[inline]
 fn firebase_auth_url(action: &str, key: &str) -> String {
-    format!(
-        "https://identitytoolkit.googleapis.com/v1/accounts:{}?key={}",
-        action, key
-    )
+    format!("{}/v1/accounts:{}?key={}", auth_host(), action, key)
 }
 
 #[inline]
 fn firebase_auth_project_url(action: &str, project: &str, key: &str) -> String {
     format!(
-        "https://identitytoolkit.googleapis.com/v1/projects/{}/accounts:{}?key={}",
-        project, action, key
+        "{}/v1/projects/{}/accounts:{}?key={}",
+        auth_host(),
+        project,
+        action,
+        key
     )
 }
 

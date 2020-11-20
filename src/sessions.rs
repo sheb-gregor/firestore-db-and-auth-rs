@@ -17,6 +17,7 @@ use std::slice::Iter;
 pub mod user {
     use super::*;
     use crate::jwt::{create_custom_jwt_encoded, JwtOAuthPrivateClaims, PrivateClaims};
+    use crate::users;
     use credentials::Credentials;
 
     #[inline]
@@ -313,7 +314,8 @@ pub mod user {
 
             // Create a session cookie with the access token previously retrieved
             let create_session_cookie_url: String = format!(
-                "https://identitytoolkit.googleapis.com/v1/projects/{}:createSessionCookie",
+                "{}/v1/projects/{}:createSessionCookie",
+                users::auth_host(),
                 credentials.project_id
             )
             .to_string();

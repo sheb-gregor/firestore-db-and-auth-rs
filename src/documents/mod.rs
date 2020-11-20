@@ -54,29 +54,42 @@ impl<'a, VALUE> JoinableIterator for std::collections::hash_map::Keys<'a, String
 #[inline]
 fn firebase_url_query(v1: &str) -> String {
     format!(
-        "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents:runQuery",
+        "{}/v1/projects/{}/databases/(default)/documents:runQuery",
+        firebase_host(),
         v1
     )
 }
 
 #[inline]
 fn firebase_url_base(v1: &str) -> String {
-    format!("https://firestore.googleapis.com/v1/{}", v1)
+    format!("{}/v1/{}", firebase_host(), v1)
 }
 
 #[inline]
-fn firebase_url_extended(v1: &str, v2: &str, v3: &str) -> String {
+fn firebase_url_extended(project: &str, v2: &str, v3: &str) -> String {
     format!(
-        "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents/{}/{}",
-        v1, v2, v3
+        "{}/v1/projects/{}/databases/(default)/documents/{}/{}",
+        firebase_host(),
+        project,
+        v2,
+        v3
     )
 }
 
+fn firebase_host() -> String {
+    match std::env::var("FIRESTORE_EMULATOR_HOST") {
+        Ok(v) => format!("http://{}", v),
+        Err(_) => "https://firestore.googleapis.com".to_string(),
+    }
+}
+
 #[inline]
-fn firebase_url(v1: &str, v2: &str) -> String {
+fn firebase_url(project: &str, collection: &str) -> String {
     format!(
-        "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents/{}?",
-        v1, v2
+        "{}/v1/projects/{}/databases/(default)/documents/{}?",
+        firebase_host(),
+        project,
+        collection
     )
 }
 
