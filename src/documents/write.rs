@@ -97,7 +97,10 @@ where
 
     if options.merge && firebase_document.fields.is_some() {
         let fields = firebase_document.fields.as_ref().unwrap().keys().join(",");
-        url = format!("{}?currentDocument.exists=true&updateMask.fieldPaths={}", url, fields);
+        url = format!(
+            "{}?currentDocument.exists=true&updateMask.fieldPaths={}",
+            url, fields
+        );
     }
 
     let builder = if document_id.is_some() {
@@ -120,9 +123,11 @@ where
     })?;
 
     let result_document: dto::Document = resp.json()?;
-    let document_id = Path::new(&result_document.name)
+    let document_id = Path::new(&result_document.name.unwrap_or_default())
         .file_name()
-        .ok_or_else(|| FirebaseError::Generic("Resulting documents 'name' field is not a valid path"))?
+        .ok_or_else(|| {
+            FirebaseError::Generic("Resulting documents 'name' field is not a valid path")
+        })?
         .to_str()
         .ok_or_else(|| FirebaseError::Generic("No valid unicode in 'name' field"))?
         .to_owned();
@@ -130,7 +135,9 @@ where
     let create_time = match result_document.create_time {
         Some(f) => Some(
             chrono::DateTime::parse_from_rfc3339(&f)
-                .map_err(|_| FirebaseError::Generic("Failed to parse rfc3339 date from 'create_time' field"))?
+                .map_err(|_| {
+                    FirebaseError::Generic("Failed to parse rfc3339 date from 'create_time' field")
+                })?
                 .with_timezone(&chrono::Utc),
         ),
         None => None,
@@ -138,7 +145,9 @@ where
     let update_time = match result_document.update_time {
         Some(f) => Some(
             chrono::DateTime::parse_from_rfc3339(&f)
-                .map_err(|_| FirebaseError::Generic("Failed to parse rfc3339 date from 'update_time' field"))?
+                .map_err(|_| {
+                    FirebaseError::Generic("Failed to parse rfc3339 date from 'update_time' field")
+                })?
                 .with_timezone(&chrono::Utc),
         ),
         None => None,

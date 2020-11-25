@@ -172,7 +172,9 @@ fn user_account_session() -> errors::Result<()> {
     )?
     .collect();
     assert_eq!(results.len(), 1);
-    let doc: DemoDTO = documents::read_by_name(&user_session, &results.get(0).unwrap().name)?;
+    let result = &results.get(0).unwrap();
+    let doc: DemoDTO =
+        documents::read_by_name(&user_session, result.name.clone().unwrap_or_default())?;
     assert_eq!(doc.a_string, "abc");
 
     let mut count = 0;

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add possibility to get of OAuth2 token by credentials.
 - Add possibility to change default custom claims by `user_set_claims`.
 - Add possibility to create JWT with custom claims and login with custom token
+- Add support the the Firebase Local Emulator Suite
 
 
 ## [0.6] - 2020-01-22
