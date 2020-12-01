@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use super::errors::{extract_google_api_error, Result};
 use super::sessions::{service_account, user};
 use crate::errors::FirebaseError;
-use crate::FirebaseAuthBearer;
+use crate::{Credentials, FirebaseAuthBearer};
 
 /// A federated services like Facebook, Github etc that the user has used to
 /// authenticated himself and that he associated with this firebase auth account.
@@ -73,6 +73,8 @@ pub struct UserRequest {
     pub email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phoneNumber: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requestType: Option<String>,
 }
 
 #[allow(non_snake_case)]
@@ -95,6 +97,19 @@ impl UserUpdateRequest {
         }
     }
 
+    fn update_email(&mut self, new_email: &str) -> Result<Self> {
+        self.data.insert("email".to_string(), new_email.to_owned());
+
+        Ok(self.to_owned())
+    }
+
+    fn update_password(&mut self, new_password: &str) -> Result<Self> {
+        self.data
+            .insert("password".to_string(), new_password.to_owned());
+
+        Ok(self.to_owned())
+    }
+
     fn update_custom_claims<T: Serialize>(&mut self, claims: T) -> Result<Self> {
         let serialized = serde_json::to_string(&claims)?;
 
@@ -115,10 +130,11 @@ impl UserUpdateRequest {
         Ok(self.to_owned())
     }
 }
+
 pub(crate) fn auth_host() -> String {
     match std::env::var("FIREBASE_AUTH_EMULATOR_HOST") {
         Ok(v) => format!("http://{}/identitytoolkit.googleapis.com", v),
-        Err(_) => "https://firestore.googleapis.com".to_string(),
+        Err(_) => "https://identitytoolkit.googleapis.com".to_string(),
     }
 }
 
@@ -160,6 +176,29 @@ fn reserved_claims() -> [&'static str; 16] {
     ]
 }
 
+#[allow(non_snake_case)]
+#[derive(Default, Deserialize)]
+struct SignInUpUserResponse {
+    localId: Option<String>,
+    idToken: String,
+    refreshToken: String,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize)]
+struct SignInUpUserRequest {
+    pub email: String,
+    pub password: String,
+    pub returnSecureToken: bool,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize)]
+struct SignInCustom {
+    pub token: String,
+    pub returnSecureToken: bool,
+}
+
 /// Retrieve information about the firebase auth user associated with the given user session
 ///
 /// Error codes:
@@ -176,6 +215,7 @@ pub fn user_info(session: &user::Session) -> Result<FirebaseAuthUserResponse> {
             uid: None,
             email: None,
             phoneNumber: None,
+            requestType: None,
         })
         .send()?;
 
@@ -197,6 +237,7 @@ pub fn get_user(session: &service_account::Session, uid: &str) -> Result<Firebas
             uid: Some(uid.to_string()),
             email: None,
             phoneNumber: None,
+            requestType: None,
         },
     )
 }
@@ -217,6 +258,7 @@ pub fn get_user_by_email(
             email: Some(email.to_string()),
             uid: None,
             phoneNumber: None,
+            requestType: None,
         },
     )
 }
@@ -237,6 +279,7 @@ pub fn get_user_by_phone(
             email: None,
             uid: None,
             phoneNumber: Some(phone.to_string()),
+            requestType: None,
         },
     )
 }
@@ -262,34 +305,6 @@ fn get_user_info(
     }
 }
 
-/// Updates the firebase auth user data associated with the given user session
-///
-/// Error codes:
-/// - INVALID_ID_TOKEN
-/// - USER_NOT_FOUND
-pub fn user_set_claims<T: Serialize>(
-    session: &service_account::Session,
-    user_id: &str,
-    claims: T,
-) -> Result<()> {
-    let req = UserUpdateRequest::new(user_id.clone()).update_custom_claims(claims)?;
-
-    let url = firebase_auth_project_url(
-        "update",
-        &session.credentials.project_id,
-        &session.credentials.api_key,
-    );
-    let resp = session
-        .client()
-        .post(&url)
-        .bearer_auth(session.oauth_access_token().to_owned())
-        .json(&req)
-        .send()?;
-
-    extract_google_api_error(resp, || user_id.to_owned())?;
-    Ok({})
-}
-
 /// Removes the firebase auth user associated with the given user session
 ///
 /// Error codes:
@@ -305,34 +320,12 @@ pub fn user_remove(session: &user::Session) -> Result<()> {
             uid: None,
             email: None,
             phoneNumber: None,
+            requestType: None,
         })
         .send()?;
 
     extract_google_api_error(resp, || session.user_id.to_owned())?;
     Ok({})
-}
-
-#[allow(non_snake_case)]
-#[derive(Default, Deserialize)]
-struct SignInUpUserResponse {
-    localId: Option<String>,
-    idToken: String,
-    refreshToken: String,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize)]
-struct SignInUpUserRequest {
-    pub email: String,
-    pub password: String,
-    pub returnSecureToken: bool,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize)]
-struct SignInCustom {
-    pub token: String,
-    pub returnSecureToken: bool,
 }
 
 fn sign_up_in(
@@ -420,4 +413,189 @@ pub fn sign_in_with_custom_jwt(
     let mut session = user::Session::by_access_token(&session.credentials, &resp.idToken)?;
     session.user_id = user_id.to_string();
     Ok(session)
+}
+
+/// Updates the firebase auth user data associated with the given user session
+///
+/// Error codes:
+/// - INVALID_ID_TOKEN
+/// - USER_NOT_FOUND
+pub fn user_set_claims<T: Serialize>(
+    session: &service_account::Session,
+    user_id: &str,
+    claims: T,
+) -> Result<()> {
+    let req = UserUpdateRequest::new(user_id.clone()).update_custom_claims(claims)?;
+
+    let url = firebase_auth_project_url(
+        "update",
+        &session.credentials.project_id,
+        &session.credentials.api_key,
+    );
+    let resp = session
+        .client()
+        .post(&url)
+        .bearer_auth(session.oauth_access_token().to_owned())
+        .json(&req)
+        .send()?;
+
+    extract_google_api_error(resp, || user_id.to_owned())?;
+    Ok({})
+}
+
+pub struct ManageUser {}
+
+impl ManageUser {
+    pub fn change_password(
+        session: &service_account::Session,
+        user_id: &str,
+        new_password: &str,
+    ) -> Result<()> {
+        let req = UserUpdateRequest::new(user_id.clone()).update_password(new_password)?;
+
+        Self::update_user(session, user_id, req)
+    }
+
+    pub fn change_email(
+        session: &service_account::Session,
+        user_id: &str,
+        new_email: &str,
+    ) -> Result<()> {
+        let req = UserUpdateRequest::new(user_id.clone()).update_email(new_email)?;
+
+        Self::update_user(session, user_id, req)
+    }
+
+    fn update_user(
+        session: &service_account::Session,
+        user_id: &str,
+        req: UserUpdateRequest,
+    ) -> Result<()> {
+        let url = firebase_auth_project_url(
+            "update",
+            &session.credentials.project_id,
+            &session.credentials.api_key,
+        );
+        let resp = session
+            .client()
+            .post(&url)
+            .bearer_auth(session.oauth_access_token().to_owned())
+            .json(&req)
+            .send()?;
+
+        extract_google_api_error(resp, || user_id.to_owned())?;
+        Ok({})
+    }
+
+    pub fn send_reset_password_email(
+        session: &service_account::Session,
+        user_email: &str,
+    ) -> Result<()> {
+        let url = firebase_auth_project_url(
+            "sendOobCode",
+            &session.credentials.project_id,
+            &session.credentials.api_key,
+        );
+        let resp = session
+            .client()
+            .post(&url)
+            .bearer_auth(session.oauth_access_token().to_owned())
+            .json(&UserRequest {
+                idToken: None,
+                uid: None,
+                email: Some(user_email.to_string()),
+                phoneNumber: None,
+                requestType: Some("PASSWORD_RESET".to_string()),
+            })
+            .send()?;
+
+        extract_google_api_error(resp, || user_email.to_owned())?;
+        Ok({})
+    }
+
+    pub fn confirm_reset_password(
+        session: &service_account::Session,
+        oob_code: &str,
+        new_password: &str,
+    ) -> Result<()> {
+        let url = firebase_auth_url("resetPassword", &session.credentials.api_key);
+
+        #[allow(non_snake_case)]
+        #[derive(Serialize)]
+        struct Req {
+            oobCode: String,
+            newPassword: String,
+        }
+
+        let resp = session
+            .client()
+            .post(&url)
+            .json(&Req {
+                oobCode: oob_code.to_string(),
+                newPassword: new_password.to_string(),
+            })
+            .send()?;
+
+        extract_google_api_error(resp, || "resetPassword".to_owned())?;
+        Ok({})
+    }
+
+    pub fn send_email_verification(
+        session: &service_account::Session,
+        user_id_token: &str,
+    ) -> Result<()> {
+        let url = firebase_auth_project_url(
+            "sendOobCode",
+            &session.credentials.project_id,
+            &session.credentials.api_key,
+        );
+
+        let resp = session
+            .client()
+            .post(&url)
+            .bearer_auth(session.oauth_access_token().to_owned())
+            .json(&UserRequest {
+                idToken: Some(user_id_token.to_owned()),
+                uid: None,
+                email: None,
+                phoneNumber: None,
+                requestType: Some("VERIFY_EMAIL".to_string()),
+            })
+            .send()?;
+
+        extract_google_api_error(resp, || "sendOobCode:VERIFY_EMAIL".to_owned())?;
+        Ok({})
+    }
+
+    pub fn confirm_email_verification(
+        session: &service_account::Session,
+        user_id: &str,
+        oob_code: &str,
+    ) -> Result<()> {
+        let url = firebase_auth_project_url(
+            "update",
+            &session.credentials.project_id,
+            &session.credentials.api_key,
+        );
+
+        #[allow(non_snake_case)]
+        #[derive(Serialize)]
+        struct Req {
+            oobCode: String,
+            localId: String,
+        }
+
+        let resp = session
+            .client()
+            .post(&url)
+            .bearer_auth(session.oauth_access_token().to_owned())
+            .json(&Req {
+                localId: user_id.to_string(),
+                oobCode: oob_code.to_string(),
+            })
+            .send()?;
+
+        extract_google_api_error(resp, || "confirm_email_verification".to_owned())?;
+        Ok({})
+    }
 }

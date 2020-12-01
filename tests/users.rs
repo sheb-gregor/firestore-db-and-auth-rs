@@ -5,31 +5,38 @@ use std::collections::HashMap;
 
 const TEST_USER_ID: &str = include_str!("test_user_id.txt");
 
-#[test]
-fn user_info() -> errors::Result<()> {
-    let cred = credentials::Credentials::from_file("firebase-service-account.json")
-        .expect("Read credentials file");
+fn service_account() -> String {
+    std::env::set_var(
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "/home/sheb/Documents/gkeys/teamo-work.json",
+    );
+    std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
+        .unwrap_or("firebase-service-account.json".to_string())
+}
 
-    let user_session = UserSession::by_user_id(&cred, TEST_USER_ID, false)?;
+#[test]
+fn user_info() {
+    let cred =
+        credentials::Credentials::from_file(&service_account()).expect("Read credentials file");
+
+    let user_session = UserSession::by_user_id(&cred, TEST_USER_ID, false).unwrap();
 
     println!("users::user_info");
-    let user_info_container = users::user_info(&user_session)?;
+    let user_info_container = users::user_info(&user_session).unwrap();
     assert_eq!(
         user_info_container.users[0].localId.as_ref().unwrap(),
         TEST_USER_ID
     );
-
-    Ok(())
 }
 
 #[test]
-fn should_sign_in_with_custom_token() -> errors::Result<()> {
-    let cred = credentials::Credentials::from_file("firebase-service-account.json")
-        .expect("Read credentials file");
-    let session = ServiceSession::new(cred.clone())?;
+fn should_sign_in_with_custom_token() {
+    let cred =
+        credentials::Credentials::from_file(&service_account()).expect("Read credentials file");
+    let session = ServiceSession::new(cred.clone()).unwrap();
 
     const ALICE: &str = "alice@mail.com";
-    let alice_user = users::get_user_by_email(&session, ALICE)?;
+    let alice_user = users::get_user_by_email(&session, ALICE).unwrap();
     print!("{:?}", alice_user);
     let alice_id = alice_user.localId.unwrap();
 
@@ -43,16 +50,31 @@ fn should_sign_in_with_custom_token() -> errors::Result<()> {
 
     let claims = JwtCustomClaims::new(&alice_id.clone(), claims);
 
-    let token = jwt::create_custom_jwt_encoded(&cred, claims)?;
-    let user_session = sign_in_with_custom_jwt(&session, &alice_id, &token)?;
+    let token = jwt::create_custom_jwt_encoded(&cred, claims).unwrap();
+    let user_session = sign_in_with_custom_jwt(&session, &alice_id, &token).unwrap();
     println!("{:?}", user_session.user_id);
-    Ok(())
+}
+
+#[test]
+fn user_sign_up_and_sign_in() {
+    let cred =
+        credentials::Credentials::from_file(&service_account()).expect("Read credentials file");
+    let session = ServiceSession::new(cred.clone()).unwrap();
+
+    const ALICE: &str = "alice1@mail.com";
+    const PASSWORD: &str = "alice_mail_com";
+
+    users::sign_up(&session, ALICE, PASSWORD).unwrap();
+
+    let user_session = users::sign_in(&session, ALICE, PASSWORD).unwrap();
+
+    users::user_remove(&user_session).unwrap();
 }
 
 #[test]
 fn user_claims() -> errors::Result<()> {
-    let cred = credentials::Credentials::from_file("firebase-service-account.json")
-        .expect("Read credentials file");
+    let cred =
+        credentials::Credentials::from_file(&service_account()).expect("Read credentials file");
 
     const ALICE: &str = "alice@mail.com";
     let session = ServiceSession::new(cred.clone())?;
