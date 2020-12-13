@@ -164,7 +164,7 @@ fn verify_email_p2() {
     let new_user_session = users::sign_in(&session, user, user_pass).unwrap();
     println!("user_id: {}", user_session.user_id);
     assert_eq!(user_session.user_id, new_user_session.user_id);
-    //
+
     // users::user_remove(&new_user_session).unwrap();
 }
 

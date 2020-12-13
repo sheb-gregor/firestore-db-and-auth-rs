@@ -2,15 +2,18 @@
 //!
 //! Retrieve firebase user information
 
+use std::collections::HashMap;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+
+use crate::errors::FirebaseError;
+use crate::{Credentials, FirebaseAuthBearer};
 
 use super::errors::{extract_google_api_error, Result};
 use super::sessions::{service_account, user};
-use crate::errors::FirebaseError;
-use crate::{Credentials, FirebaseAuthBearer};
+use chrono::format::Fixed::UpperAmPm;
 
 /// A federated services like Facebook, Github etc that the user has used to
 /// authenticated himself and that he associated with this firebase auth account.
@@ -99,7 +102,6 @@ impl UserUpdateRequest {
 
     fn update_email(&mut self, new_email: &str) -> Result<Self> {
         self.data.insert("email".to_string(), new_email.to_owned());
-
         Ok(self.to_owned())
     }
 
@@ -443,6 +445,60 @@ pub fn user_set_claims<T: Serialize>(
     Ok({})
 }
 
+/// Specifies the required continue/state URL with optional Android and iOS settings. Used when
+/// invoking the email action link generation APIs.
+#[allow(non_snake_case)]
+#[derive(Serialize)]
+pub struct ActionCodeSettings {
+    pub continueUrl: String,
+    pub canHandleCodeInApp: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iOSBundleId: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub androidPackageName: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub androidMinimumVersion: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub androidInstallApp: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dynamicLinkDomain: Option<String>,
+}
+
+/// Signs in using an email and sign-in email link.
+///
+/// Error codes:
+/// EMAIL_NOT_FOUND: There is no user record corresponding to this identifier. The user may have been deleted.
+/// USER_DISABLED: The user account has been disabled by an administrator.
+pub fn sign_in_with_email_link(
+    session: &service_account::Session,
+    email: &str,
+    oob_code: &str,
+) -> Result<user::Session> {
+    let url = firebase_auth_url("emailLinkSignin", &session.credentials.api_key);
+    #[allow(non_snake_case)]
+    #[derive(Serialize)]
+    struct Req {
+        oobCode: String,
+        email: String,
+        returnSecureToken: bool,
+    }
+    let resp = session
+        .client()
+        .post(&url)
+        .json(&Req {
+            email: email.to_owned(),
+            oobCode: oob_code.to_owned(),
+            returnSecureToken: true,
+        })
+        .send()?;
+
+    let resp = extract_google_api_error(resp, || "emailLinkSignin".to_owned())?;
+    let resp: SignInUpUserResponse = resp.json()?;
+
+    let session = user::Session::by_access_token(&session.credentials, &resp.idToken)?;
+    Ok(session)
+}
+
 pub struct ManageUser {}
 
 impl ManageUser {
@@ -597,5 +653,52 @@ impl ManageUser {
 
         extract_google_api_error(resp, || "confirm_email_verification".to_owned())?;
         Ok({})
+    }
+
+    /// Generates the out-of-band email action link for email link sign-in flows, using the action
+    ///  code settings provided.
+    ///
+    /// Error codes:
+    /// - USER_NOT_FOUND
+    pub fn email_sign_in_link(
+        session: &service_account::Session,
+        user_email: &str,
+        opts: ActionCodeSettings,
+    ) -> Result<String> {
+        let url = firebase_auth_project_url(
+            "sendOobCode",
+            &session.credentials.project_id,
+            &session.credentials.api_key,
+        );
+        #[allow(non_snake_case)]
+        #[derive(Serialize)]
+        struct Req {
+            requestType: String,
+            email: String,
+            returnOobLink: bool,
+            #[serde(flatten)]
+            opts: ActionCodeSettings,
+        }
+        let resp = session
+            .client()
+            .post(&url)
+            .bearer_auth(session.oauth_access_token().to_owned())
+            .json(&Req {
+                email: user_email.to_string(),
+                requestType: "EMAIL_SIGNIN".to_string(),
+                returnOobLink: true,
+                opts,
+            })
+            .send()?;
+        let resp = extract_google_api_error(resp, || user_email.to_owned())?;
+
+        #[allow(non_snake_case)]
+        #[derive(Deserialize, Serialize)]
+        struct Res {
+            oobLink: String,
+        }
+
+        let result: Res = resp.json()?;
+        Ok(result.oobLink)
     }
 }

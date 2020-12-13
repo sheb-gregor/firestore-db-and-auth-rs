@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add possibility to create JWT with custom claims and login with custom token
 - Add support the the Firebase Local Emulator Suite
 - Add change email, password, email verification and password reset requests
+- Add password-less sign-in methods
 
 
 ## [0.6] - 2020-01-22
