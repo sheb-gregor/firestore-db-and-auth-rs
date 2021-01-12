@@ -108,3 +108,36 @@ fn user_claims() -> errors::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn get_email_with_sign_in_link() {
+    let cred =
+        credentials::Credentials::from_file(&service_account()).expect("Read credentials file");
+    let session = ServiceSession::new(cred.clone()).unwrap();
+
+    const ALICE: &str = "alice@sheb.me";
+
+    let link = users::email_sign_in_link(
+        &session,
+        ALICE,
+        true,
+        users::ActionCodeSettings {
+            continueUrl: "http://localhost:5000/#".to_string(),
+            canHandleCodeInApp: true,
+            iOSBundleId: None,
+            androidPackageName: None,
+            androidMinimumVersion: None,
+            androidInstallApp: None,
+            dynamicLinkDomain: None,
+        },
+    )
+    .unwrap();
+    println!("{}", link);
+
+    // users::sign_in_with_email_link(
+    //     &session,
+    //     ALICE,
+    //     "a8QQxl8kdP2Oguosgw4eu0c-ClQA1d9k7arwDtmx08AAAAF29DqIuQ",
+    // )
+    // .unwrap();
+}

@@ -464,6 +464,56 @@ pub struct ActionCodeSettings {
     pub dynamicLinkDomain: Option<String>,
 }
 
+/// Generates the out-of-band email action link for email link sign-in flows, using the action
+///  code settings provided.
+///
+/// # Arguments
+/// * `session` - A session provider
+/// * `user_email` - An email of the user to login.
+/// * `return_oob_link` - Whether set true return link as string, otherwise send email.
+/// * `opts` - Request options. `continueUrl` is required, other fields are optional.
+
+/// Error codes:
+/// - USER_NOT_FOUND
+pub fn email_sign_in_link(
+    session: &service_account::Session,
+    user_email: &str,
+    return_oob_link: bool,
+    opts: ActionCodeSettings,
+) -> Result<String> {
+    let url = firebase_auth_url("sendOobCode", &session.credentials.api_key);
+    #[allow(non_snake_case)]
+    #[derive(Serialize)]
+    struct Req {
+        requestType: String,
+        email: String,
+        returnOobLink: bool,
+        #[serde(flatten)]
+        opts: ActionCodeSettings,
+    }
+    let resp = session
+        .client()
+        .post(&url)
+        .bearer_auth(session.oauth_access_token().to_owned())
+        .json(&Req {
+            email: user_email.to_string(),
+            requestType: "EMAIL_SIGNIN".to_string(),
+            returnOobLink: return_oob_link,
+            opts,
+        })
+        .send()?;
+    let resp = extract_google_api_error(resp, || user_email.to_owned())?;
+
+    #[derive(Default, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase", default)]
+    struct Res {
+        oob_link: String,
+    }
+
+    let result: Res = resp.json()?;
+    Ok(result.oob_link)
+}
+
 /// Signs in using an email and sign-in email link.
 ///
 /// Error codes:
@@ -474,7 +524,11 @@ pub fn sign_in_with_email_link(
     email: &str,
     oob_code: &str,
 ) -> Result<user::Session> {
-    let url = firebase_auth_url("emailLinkSignin", &session.credentials.api_key);
+    // let url = firebase_auth_url("emailLinkSignin", &session.credentials.api_key);
+    let url = format!(
+        "https://www.googleapis.com/identitytoolkit/v3/relyingparty/emailLinkSignin?key={}",
+        &session.credentials.api_key
+    );
     #[allow(non_snake_case)]
     #[derive(Serialize)]
     struct Req {
@@ -653,52 +707,5 @@ impl ManageUser {
 
         extract_google_api_error(resp, || "confirm_email_verification".to_owned())?;
         Ok({})
-    }
-
-    /// Generates the out-of-band email action link for email link sign-in flows, using the action
-    ///  code settings provided.
-    ///
-    /// Error codes:
-    /// - USER_NOT_FOUND
-    pub fn email_sign_in_link(
-        session: &service_account::Session,
-        user_email: &str,
-        opts: ActionCodeSettings,
-    ) -> Result<String> {
-        let url = firebase_auth_project_url(
-            "sendOobCode",
-            &session.credentials.project_id,
-            &session.credentials.api_key,
-        );
-        #[allow(non_snake_case)]
-        #[derive(Serialize)]
-        struct Req {
-            requestType: String,
-            email: String,
-            returnOobLink: bool,
-            #[serde(flatten)]
-            opts: ActionCodeSettings,
-        }
-        let resp = session
-            .client()
-            .post(&url)
-            .bearer_auth(session.oauth_access_token().to_owned())
-            .json(&Req {
-                email: user_email.to_string(),
-                requestType: "EMAIL_SIGNIN".to_string(),
-                returnOobLink: true,
-                opts,
-            })
-            .send()?;
-        let resp = extract_google_api_error(resp, || user_email.to_owned())?;
-
-        #[allow(non_snake_case)]
-        #[derive(Deserialize, Serialize)]
-        struct Res {
-            oobLink: String,
-        }
-
-        let result: Res = resp.json()?;
-        Ok(result.oobLink)
     }
 }
