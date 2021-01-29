@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add support the the Firebase Local Emulator Suite
 - Add change email, password, email verification and password reset requests
 - Add password-less sign-in methods
-
+- Add support of the login by phone number and sms code
 
 ## [0.6] - 2020-01-22
 

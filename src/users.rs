@@ -524,7 +524,6 @@ pub fn sign_in_with_email_link(
     email: &str,
     oob_code: &str,
 ) -> Result<user::Session> {
-    // let url = firebase_auth_url("emailLinkSignin", &session.credentials.api_key);
     let url = format!(
         "https://www.googleapis.com/identitytoolkit/v3/relyingparty/emailLinkSignin?key={}",
         &session.credentials.api_key
@@ -547,6 +546,100 @@ pub fn sign_in_with_email_link(
         .send()?;
 
     let resp = extract_google_api_error(resp, || "emailLinkSignin".to_owned())?;
+    let resp: SignInUpUserResponse = resp.json()?;
+
+    let session = user::Session::by_access_token(&session.credentials, &resp.idToken)?;
+    Ok(session)
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize)]
+pub struct CaptchaParams {
+    pub kind: String,
+    pub recaptchaStoken: String,
+    pub recaptchaSiteKey: String,
+}
+
+/// Gets parameters needed for generating a reCAPTCHA challenge.
+pub fn request_captcha(session: &service_account::Session) -> Result<CaptchaParams> {
+    let url = format!(
+        "https://identitytoolkit.googleapis.com/v1/recaptchaParams?key={}",
+        &session.credentials.api_key
+    );
+
+    let resp = session.client().get(&url).send()?;
+
+    let resp = extract_google_api_error(resp, || "recaptchaParams".to_owned())?;
+    let resp: CaptchaParams = resp.json()?;
+
+    Ok(resp)
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize)]
+pub struct VerifyPhoneResp {
+    pub sessionInfo: String,
+}
+
+/// Sends a SMS verification code for phone number sign-in.
+pub fn verify_phone_number(
+    session: &service_account::Session,
+    phone: &str,
+    captcha_token: &str,
+) -> Result<VerifyPhoneResp> {
+    let url = format!(
+        "https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key={}",
+        &session.credentials.api_key
+    );
+    #[allow(non_snake_case)]
+    #[derive(Serialize)]
+    struct Req {
+        phoneNumber: String,
+        recaptchaToken: String,
+    }
+    let resp = session
+        .client()
+        .post(&url)
+        .json(&Req {
+            phoneNumber: phone.to_owned(),
+            recaptchaToken: captcha_token.to_owned(),
+        })
+        .send()?;
+
+    let resp = extract_google_api_error(resp, || "accounts:sendVerificationCode".to_owned())?;
+
+    let resp: VerifyPhoneResp = resp.json()?;
+    Ok(resp)
+}
+
+/// Signs in a user with email and password. If the sign-in succeeds,
+/// a new Identity Platform ID token and refresh token are issued for the authenticated user.
+pub fn sign_in_with_phone(
+    session: &service_account::Session,
+    code: &str,
+    session_info: &str,
+) -> Result<user::Session> {
+    let url = format!(
+        "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPhoneNumber?key={}",
+        &session.credentials.api_key
+    );
+    #[allow(non_snake_case)]
+    #[derive(Serialize)]
+    struct Req {
+        code: String,
+        sessionInfo: String,
+    }
+    let resp = session
+        .client()
+        .post(&url)
+        .json(&Req {
+            code: code.to_owned(),
+            sessionInfo: session_info.to_owned(),
+        })
+        .send()?;
+
+    let resp = extract_google_api_error(resp, || "accounts:signInWithPhoneNumber".to_owned())?;
+
     let resp: SignInUpUserResponse = resp.json()?;
 
     let session = user::Session::by_access_token(&session.credentials, &resp.idToken)?;
