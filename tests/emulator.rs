@@ -1,5 +1,6 @@
 use firestore_db_and_auth::errors::{extract_google_api_error, FirebaseError};
 use firestore_db_and_auth::sessions::service_account;
+use firestore_db_and_auth::sessions::user::SessionAuth;
 use firestore_db_and_auth::{credentials, errors, users, FirebaseAuthBearer, ServiceSession};
 use std::collections::HashMap;
 
@@ -25,7 +26,9 @@ fn sign_up() {
     let user_session = users::sign_up(&session, user, user_pass).unwrap();
     println!("user_id: {}", user_session.user_id);
 
-    users::user_remove(&user_session).unwrap();
+    if let SessionAuth::Completed(user_session) = user_session {
+        users::user_remove(&user_session).unwrap();
+    }
 }
 
 #[test]
@@ -41,7 +44,9 @@ fn sign_in() {
     println!("user_id: {}", user_session.user_id);
     assert_eq!(user_session.user_id, new_user_session.user_id);
 
-    users::user_remove(&new_user_session).unwrap();
+    if let SessionAuth::Completed(user_session) = new_user_session {
+        users::user_remove(&user_session).unwrap();
+    }
 }
 
 #[test]
@@ -61,7 +66,9 @@ fn change_password() {
     println!("user_id: {}", user_session.user_id);
     assert_eq!(user_session.user_id, new_user_session.user_id);
 
-    users::user_remove(&new_user_session).unwrap();
+    if let SessionAuth::Completed(user_session) = new_user_session {
+        users::user_remove(&user_session).unwrap();
+    }
 }
 
 #[test]
@@ -83,7 +90,9 @@ fn reset_password() {
     println!("user_id: {}", user_session.user_id);
     assert_eq!(user_session.user_id, new_user_session.user_id);
 
-    users::user_remove(&new_user_session).unwrap();
+    if let SessionAuth::Completed(user_session) = new_user_session {
+        users::user_remove(&user_session).unwrap();
+    }
 }
 
 #[test]
@@ -117,7 +126,9 @@ fn reset_password_p2() {
     println!("user_id: {}", user_session.user_id);
     assert_eq!(user_session.user_id, new_user_session.user_id);
     //
-    users::user_remove(&new_user_session).unwrap();
+    if let SessionAuth::Completed(user_session) = new_user_session {
+        users::user_remove(&user_session).unwrap();
+    }
 }
 
 #[test]
@@ -133,7 +144,9 @@ fn change_email() {
     users::ManageUser::change_email(&session, &user_session.user_id, new_email).unwrap();
     let new_user_session = users::sign_in(&session, new_email, user_pass).unwrap();
     assert_eq!(user_session.user_id, new_user_session.user_id);
-    users::user_remove(&new_user_session).unwrap();
+    if let SessionAuth::Completed(user_session) = new_user_session {
+        users::user_remove(&user_session).unwrap();
+    }
 }
 
 #[test]

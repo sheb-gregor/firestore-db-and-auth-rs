@@ -6,16 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- Add Custom Claims support for user's JWT.
-- Add possibility to get of OAuth2 token by credentials.
-- Add possibility to change default custom claims by `user_set_claims`.
-- Add possibility to create JWT with custom claims and login with custom token
-- Add support the the Firebase Local Emulator Suite
-- Add change email, password, email verification and password reset requests
-- Add password-less sign-in methods
-- Add support of the login by phone number and sms code
+- Custom Claims support for user's JWT.
+- Possibility to get of OAuth2 token by credentials.
+- Possibility to change default custom claims by `user_set_claims`.
+- Possibility to create JWT with custom claims and login with custom token.
+- Support the the Firebase Local Emulator Suite.
+- Change email, password, email verification and password reset requests.
+- Password-less sign-in methods.
+- Support of the login by phone number and sms code.
+- Support of the Multi Factor Auth (MFA) by phone number and sms code.
 
 ## [0.6] - 2020-01-22
 

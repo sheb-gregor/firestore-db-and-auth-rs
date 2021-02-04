@@ -18,6 +18,7 @@ pub mod user {
     use super::*;
     use crate::jwt::{create_custom_jwt_encoded, JwtOAuthPrivateClaims, PrivateClaims};
     use crate::users;
+    use crate::users::MfaInfo;
     use credentials::Credentials;
 
     #[inline]
@@ -31,6 +32,10 @@ pub mod user {
     #[inline]
     fn refresh_to_access_endpoint(v: &str) -> String {
         format!("https://securetoken.googleapis.com/v1/token?key={}", v)
+    }
+    pub enum SessionAuth {
+        Completed(Session),
+        MFARequired(users::MfaResponse),
     }
 
     /// An impersonated session.

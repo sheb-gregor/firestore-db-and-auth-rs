@@ -1,4 +1,5 @@
 use firestore_db_and_auth::jwt::JwtCustomClaims;
+use firestore_db_and_auth::sessions::user::SessionAuth;
 use firestore_db_and_auth::users::sign_in_with_custom_jwt;
 use firestore_db_and_auth::*;
 use std::collections::HashMap;
@@ -66,9 +67,10 @@ fn user_sign_up_and_sign_in() {
 
     users::sign_up(&session, ALICE, PASSWORD).unwrap();
 
-    let user_session = users::sign_in(&session, ALICE, PASSWORD).unwrap();
-
-    users::user_remove(&user_session).unwrap();
+    if let SessionAuth::Completed(user_session) = users::sign_in(&session, ALICE, PASSWORD).unwrap()
+    {
+        users::user_remove(&user_session).unwrap();
+    }
 }
 
 #[test]

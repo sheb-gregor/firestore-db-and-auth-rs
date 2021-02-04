@@ -13,6 +13,7 @@ use crate::{Credentials, FirebaseAuthBearer};
 
 use super::errors::{extract_google_api_error, Result};
 use super::sessions::{service_account, user};
+use crate::sessions::user::SessionAuth;
 use chrono::format::Fixed::UpperAmPm;
 
 /// A federated services like Facebook, Github etc that the user has used to
@@ -180,10 +181,30 @@ fn reserved_claims() -> [&'static str; 16] {
 
 #[allow(non_snake_case)]
 #[derive(Default, Deserialize)]
-struct SignInUpUserResponse {
-    localId: Option<String>,
-    idToken: String,
-    refreshToken: String,
+pub struct SignInUpUserResponse {
+    pub localId: Option<String>,
+    pub idToken: Option<String>,
+    pub refreshToken: Option<String>,
+    pub email: Option<String>,
+    pub mfaPendingCredential: Option<String>,
+    pub mfaInfo: Option<Vec<MfaInfo>>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct MfaInfo {
+    pub phoneInfo: String,
+    pub mfaEnrollmentId: String,
+    pub displayName: String,
+    pub enrolledAt: String,
+}
+
+#[allow(non_snake_case)]
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct MfaResponse {
+    pub localId: Option<String>,
+    pub mfaPendingCredential: String,
+    pub mfaInfo: Vec<MfaInfo>,
 }
 
 #[allow(non_snake_case)]
@@ -335,7 +356,7 @@ fn sign_up_in(
     email: &str,
     password: &str,
     action: &str,
-) -> Result<user::Session> {
+) -> Result<user::SessionAuth> {
     let url = firebase_auth_url(action, &session.credentials.api_key);
     let resp = session
         .client()
@@ -350,13 +371,7 @@ fn sign_up_in(
     let resp = extract_google_api_error(resp, || email.to_owned())?;
 
     let resp: SignInUpUserResponse = resp.json()?;
-
-    Ok(user::Session::new(
-        &session.credentials,
-        resp.localId.as_deref(),
-        Some(&resp.idToken),
-        Some(&resp.refreshToken),
-    )?)
+    session_auth_from_response(&session.credentials, resp)
 }
 
 /// Creates the firebase auth user with the given email and password and returns
@@ -370,7 +385,7 @@ pub fn sign_up(
     session: &service_account::Session,
     email: &str,
     password: &str,
-) -> Result<user::Session> {
+) -> Result<user::SessionAuth> {
     sign_up_in(session, email, password, "signUp")
 }
 
@@ -384,7 +399,7 @@ pub fn sign_in(
     session: &service_account::Session,
     email: &str,
     password: &str,
-) -> Result<user::Session> {
+) -> Result<user::SessionAuth> {
     sign_up_in(session, email, password, "signInWithPassword")
 }
 
@@ -396,9 +411,9 @@ pub fn sign_in(
 /// USER_DISABLED: The user account has been disabled by an administrator.
 pub fn sign_in_with_custom_jwt(
     session: &service_account::Session,
-    user_id: &str,
+    _user_id: &str,
     token: &str,
-) -> Result<user::Session> {
+) -> Result<user::SessionAuth> {
     let url = firebase_auth_url("signInWithCustomToken", &session.credentials.api_key);
     let resp = session
         .client()
@@ -412,9 +427,8 @@ pub fn sign_in_with_custom_jwt(
     let resp = extract_google_api_error(resp, || "signInWithCustomToken".to_owned())?;
 
     let resp: SignInUpUserResponse = resp.json()?;
-    let mut session = user::Session::by_access_token(&session.credentials, &resp.idToken)?;
-    session.user_id = user_id.to_string();
-    Ok(session)
+
+    session_auth_from_response(&session.credentials, resp)
 }
 
 /// Updates the firebase auth user data associated with the given user session
@@ -523,7 +537,7 @@ pub fn sign_in_with_email_link(
     session: &service_account::Session,
     email: &str,
     oob_code: &str,
-) -> Result<user::Session> {
+) -> Result<user::SessionAuth> {
     let url = format!(
         "https://www.googleapis.com/identitytoolkit/v3/relyingparty/emailLinkSignin?key={}",
         &session.credentials.api_key
@@ -548,8 +562,7 @@ pub fn sign_in_with_email_link(
     let resp = extract_google_api_error(resp, || "emailLinkSignin".to_owned())?;
     let resp: SignInUpUserResponse = resp.json()?;
 
-    let session = user::Session::by_access_token(&session.credentials, &resp.idToken)?;
-    Ok(session)
+    session_auth_from_response(&session.credentials, resp)
 }
 
 #[allow(non_snake_case)]
@@ -563,7 +576,8 @@ pub struct CaptchaParams {
 /// Gets parameters needed for generating a reCAPTCHA challenge.
 pub fn request_captcha(session: &service_account::Session) -> Result<CaptchaParams> {
     let url = format!(
-        "https://identitytoolkit.googleapis.com/v1/recaptchaParams?key={}",
+        "{}/v1/recaptchaParams?key={}",
+        auth_host(),
         &session.credentials.api_key
     );
 
@@ -576,8 +590,25 @@ pub fn request_captcha(session: &service_account::Session) -> Result<CaptchaPara
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct VerifyPhoneResp {
+    pub sessionInfo: String,
+}
+
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PhoneEnrollmentInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phoneNumber: Option<String>,
+    pub recaptchaToken: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idToken: Option<String>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PhoneEnrollmentFinalize {
+    pub code: String,
     pub sessionInfo: String,
 }
 
@@ -586,23 +617,21 @@ pub fn verify_phone_number(
     session: &service_account::Session,
     phone: &str,
     captcha_token: &str,
+    user_id_token: Option<String>,
 ) -> Result<VerifyPhoneResp> {
     let url = format!(
-        "https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key={}",
+        "{}/v1/accounts:sendVerificationCode?key={}",
+        auth_host(),
         &session.credentials.api_key
     );
-    #[allow(non_snake_case)]
-    #[derive(Serialize)]
-    struct Req {
-        phoneNumber: String,
-        recaptchaToken: String,
-    }
+
     let resp = session
         .client()
         .post(&url)
-        .json(&Req {
-            phoneNumber: phone.to_owned(),
+        .json(&PhoneEnrollmentInfo {
+            phoneNumber: Some(phone.to_owned()),
             recaptchaToken: captcha_token.to_owned(),
+            idToken: user_id_token,
         })
         .send()?;
 
@@ -618,21 +647,17 @@ pub fn sign_in_with_phone(
     session: &service_account::Session,
     code: &str,
     session_info: &str,
-) -> Result<user::Session> {
+) -> Result<user::SessionAuth> {
     let url = format!(
-        "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPhoneNumber?key={}",
+        "{}/v1/accounts:signInWithPhoneNumber?key={}",
+        auth_host(),
         &session.credentials.api_key
     );
-    #[allow(non_snake_case)]
-    #[derive(Serialize)]
-    struct Req {
-        code: String,
-        sessionInfo: String,
-    }
+
     let resp = session
         .client()
         .post(&url)
-        .json(&Req {
+        .json(&PhoneEnrollmentFinalize {
             code: code.to_owned(),
             sessionInfo: session_info.to_owned(),
         })
@@ -641,9 +666,90 @@ pub fn sign_in_with_phone(
     let resp = extract_google_api_error(resp, || "accounts:signInWithPhoneNumber".to_owned())?;
 
     let resp: SignInUpUserResponse = resp.json()?;
+    session_auth_from_response(&session.credentials, resp)
+}
 
-    let session = user::Session::by_access_token(&session.credentials, &resp.idToken)?;
-    Ok(session)
+fn session_auth_from_response(
+    credentials: &Credentials,
+    resp: SignInUpUserResponse,
+) -> Result<user::SessionAuth> {
+    if resp.idToken.is_some() {
+        let session =
+            user::Session::by_access_token(credentials, &resp.idToken.unwrap_or_default())?;
+        return Ok(user::SessionAuth::Completed(session));
+    }
+
+    return Ok(SessionAuth::MFARequired(MfaResponse {
+        localId: resp.localId,
+        mfaPendingCredential: resp.mfaPendingCredential.unwrap_or_default(),
+        mfaInfo: resp.mfaInfo.unwrap_or_default(),
+    }));
+}
+
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct StartMfaSignInRequest {
+    pub mfaEnrollmentId: String,
+    pub mfaPendingCredential: String,
+    pub phoneEnrollmentInfo: PhoneEnrollmentInfo,
+    pub tenantId: Option<String>,
+}
+
+/// Sends the MFA challenge
+///
+/// Detailed info here:
+/// https://cloud.google.com/identity-platform/docs/reference/rest/v2/accounts.mfaSignIn/start
+pub fn sign_in_mfa_start(
+    session: &service_account::Session,
+    options: StartMfaPhoneRequest,
+) -> Result<VerifyPhoneResp> {
+    let url = format!(
+        "{}/v1/mfaSignIn:start?key={}",
+        auth_host(),
+        &session.credentials.api_key
+    );
+
+    let resp = session.client().post(&url).json(&options).send()?;
+    let resp = extract_google_api_error(resp, || "confirm_email_verification".to_owned())?;
+
+    #[allow(non_snake_case)]
+    #[derive(Deserialize)]
+    struct Response {
+        phoneSessionInfo: VerifyPhoneResp,
+    }
+
+    let resp: Response = resp.json()?;
+    Ok(resp.phoneSessionInfo)
+}
+
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FinalizeMfaSignInRequest {
+    pub mfaPendingCredential: String,
+    pub tenantId: Option<String>,
+    pub phoneVerificationInfo: PhoneEnrollmentFinalize,
+}
+
+/// Verifies the MFA challenge and performs sign-in
+///
+/// Detailed info here:
+/// https://cloud.google.com/identity-platform/docs/reference/rest/v2/accounts.mfaSignIn/finalize
+///
+pub fn sign_in_mfa_finalize(
+    session: &service_account::Session,
+    options: FinalizeMfaSignInRequest,
+) -> Result<SignInUpUserResponse> {
+    let url = format!(
+        "{}/v2/accounts/mfaSignIn:finalize?key={}",
+        auth_host(),
+        &session.credentials.api_key
+    );
+
+    let resp = session.client().post(&url).json(&options).send()?;
+    let resp = extract_google_api_error(resp, || "mfa_enrollment_finalize".to_owned())?;
+    let resp: SignInUpUserResponse = resp.json()?;
+
+    Ok(resp)
 }
 
 pub struct ManageUser {}
@@ -801,4 +907,101 @@ impl ManageUser {
         extract_google_api_error(resp, || "confirm_email_verification".to_owned())?;
         Ok({})
     }
+}
+
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct StartMfaPhoneRequest {
+    pub idToken: String,
+    pub tenantId: Option<String>,
+    pub phoneEnrollmentInfo: PhoneEnrollmentInfo,
+}
+
+/// Step one of the MFA enrollment process.
+/// In SMS case, this sends an SMS verification code to the user.
+///
+/// Detailed info here:
+/// https://cloud.google.com/identity-platform/docs/reference/rest/v2/accounts.mfaEnrollment/start
+pub fn mfa_enrollment_start(
+    session: &service_account::Session,
+    options: StartMfaPhoneRequest,
+) -> Result<VerifyPhoneResp> {
+    let url = format!(
+        "{}/v1/mfaEnrollment:start?key={}",
+        auth_host(),
+        &session.credentials.api_key
+    );
+
+    let resp = session.client().post(&url).json(&options).send()?;
+    let resp = extract_google_api_error(resp, || "confirm_email_verification".to_owned())?;
+
+    #[allow(non_snake_case)]
+    #[derive(Deserialize)]
+    struct Response {
+        phoneSessionInfo: VerifyPhoneResp,
+    }
+
+    let resp: Response = resp.json()?;
+    Ok(resp.phoneSessionInfo)
+}
+
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FinalizeMfaPhoneRequest {
+    pub idToken: String,
+    pub displayName: String,
+    pub tenantId: Option<String>,
+    pub phoneVerificationInfo: PhoneEnrollmentFinalize,
+}
+
+/// Finishes enrolling a second factor for the user.
+///
+/// Detailed info here:
+/// https://cloud.google.com/identity-platform/docs/reference/rest/v2/accounts.mfaEnrollment/finalize
+///
+pub fn mfa_enrollment_finalize(
+    session: &service_account::Session,
+    options: FinalizeMfaPhoneRequest,
+) -> Result<SignInUpUserResponse> {
+    let url = format!(
+        "{}/v2/accounts/mfaEnrollment:finalize?key={}",
+        auth_host(),
+        &session.credentials.api_key
+    );
+
+    let resp = session.client().post(&url).json(&options).send()?;
+    let resp = extract_google_api_error(resp, || "mfa_enrollment_finalize".to_owned())?;
+    let resp: SignInUpUserResponse = resp.json()?;
+
+    Ok(resp)
+}
+
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct WithdrawMfaPhoneRequest {
+    pub idToken: String,
+    pub mfaEnrollmentId: String,
+    pub tenantId: Option<String>,
+}
+
+/// Revokes one second factor from the enrolled second factors for an account.
+///
+/// Detailed info here:
+/// https://cloud.google.com/identity-platform/docs/reference/rest/v2/accounts.mfaEnrollment/withdraw
+///
+pub fn mfa_enrollment_withdraw(
+    session: &service_account::Session,
+    options: WithdrawMfaPhoneRequest,
+) -> Result<SignInUpUserResponse> {
+    let url = format!(
+        "{}/v2/accounts/mfaEnrollment:withdraw?key={}",
+        auth_host(),
+        &session.credentials.api_key
+    );
+
+    let resp = session.client().post(&url).json(&options).send()?;
+    let resp = extract_google_api_error(resp, || "mfa_enrollment_withdraw".to_owned())?;
+    let resp: SignInUpUserResponse = resp.json()?;
+
+    Ok(resp)
 }

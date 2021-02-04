@@ -3,6 +3,7 @@
 use std::error;
 use std::fmt;
 
+use crate::users::MfaInfo;
 use reqwest;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
