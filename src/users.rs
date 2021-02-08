@@ -701,7 +701,7 @@ pub struct StartMfaSignInRequest {
 /// https://cloud.google.com/identity-platform/docs/reference/rest/v2/accounts.mfaSignIn/start
 pub fn sign_in_mfa_start(
     session: &service_account::Session,
-    options: StartMfaPhoneRequest,
+    options: StartMfaSignInRequest,
 ) -> Result<VerifyPhoneResp> {
     let url = format!(
         "{}/v1/mfaSignIn:start?key={}",
@@ -911,7 +911,7 @@ impl ManageUser {
 
 #[allow(non_snake_case)]
 #[derive(Clone, Serialize, Deserialize)]
-pub struct StartMfaPhoneRequest {
+pub struct StartMfaEnrollmentRequest {
     pub idToken: String,
     pub tenantId: Option<String>,
     pub phoneEnrollmentInfo: PhoneEnrollmentInfo,
@@ -924,7 +924,7 @@ pub struct StartMfaPhoneRequest {
 /// https://cloud.google.com/identity-platform/docs/reference/rest/v2/accounts.mfaEnrollment/start
 pub fn mfa_enrollment_start(
     session: &service_account::Session,
-    options: StartMfaPhoneRequest,
+    options: StartMfaEnrollmentRequest,
 ) -> Result<VerifyPhoneResp> {
     let url = format!(
         "{}/v1/mfaEnrollment:start?key={}",
@@ -947,7 +947,7 @@ pub fn mfa_enrollment_start(
 
 #[allow(non_snake_case)]
 #[derive(Clone, Serialize, Deserialize)]
-pub struct FinalizeMfaPhoneRequest {
+pub struct FinalizeMfaEnrollmentRequest {
     pub idToken: String,
     pub displayName: String,
     pub tenantId: Option<String>,
@@ -961,7 +961,7 @@ pub struct FinalizeMfaPhoneRequest {
 ///
 pub fn mfa_enrollment_finalize(
     session: &service_account::Session,
-    options: FinalizeMfaPhoneRequest,
+    options: FinalizeMfaEnrollmentRequest,
 ) -> Result<SignInUpUserResponse> {
     let url = format!(
         "{}/v2/accounts/mfaEnrollment:finalize?key={}",
@@ -978,7 +978,7 @@ pub fn mfa_enrollment_finalize(
 
 #[allow(non_snake_case)]
 #[derive(Clone, Serialize, Deserialize)]
-pub struct WithdrawMfaPhoneRequest {
+pub struct WithdrawMfaEnrollmentRequest {
     pub idToken: String,
     pub mfaEnrollmentId: String,
     pub tenantId: Option<String>,
@@ -991,7 +991,7 @@ pub struct WithdrawMfaPhoneRequest {
 ///
 pub fn mfa_enrollment_withdraw(
     session: &service_account::Session,
-    options: WithdrawMfaPhoneRequest,
+    options: WithdrawMfaEnrollmentRequest,
 ) -> Result<SignInUpUserResponse> {
     let url = format!(
         "{}/v2/accounts/mfaEnrollment:withdraw?key={}",
