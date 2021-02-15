@@ -704,7 +704,7 @@ pub fn sign_in_mfa_start(
     options: StartMfaSignInRequest,
 ) -> Result<VerifyPhoneResp> {
     let url = format!(
-        "{}/v1/mfaSignIn:start?key={}",
+        "{}/v2/accounts/mfaSignIn:start?key={}",
         auth_host(),
         &session.credentials.api_key
     );
@@ -927,7 +927,7 @@ pub fn mfa_enrollment_start(
     options: StartMfaEnrollmentRequest,
 ) -> Result<VerifyPhoneResp> {
     let url = format!(
-        "{}/v1/mfaEnrollment:start?key={}",
+        "{}/v2/accounts/mfaEnrollment:start?key={}",
         auth_host(),
         &session.credentials.api_key
     );
