@@ -691,7 +691,7 @@ fn session_auth_from_response(
 pub struct StartMfaSignInRequest {
     pub mfaEnrollmentId: String,
     pub mfaPendingCredential: String,
-    pub phoneEnrollmentInfo: PhoneEnrollmentInfo,
+    pub phoneSignInInfo: PhoneEnrollmentInfo,
     pub tenantId: Option<String>,
 }
 
@@ -715,11 +715,11 @@ pub fn sign_in_mfa_start(
     #[allow(non_snake_case)]
     #[derive(Deserialize)]
     struct Response {
-        phoneSessionInfo: VerifyPhoneResp,
+        phoneResponseInfo: VerifyPhoneResp,
     }
 
     let resp: Response = resp.json()?;
-    Ok(resp.phoneSessionInfo)
+    Ok(resp.phoneResponseInfo)
 }
 
 #[allow(non_snake_case)]
