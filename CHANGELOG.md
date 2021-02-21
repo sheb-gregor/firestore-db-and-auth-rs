@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support of the login by phone number and sms code.
 - Support of the Multi Factor Auth (MFA) by phone number and sms code.
 
+### Fixed
+
+- Retrieving of the empty `MapValue` from Firestore collection.
+
 ## [0.6] - 2020-01-22
 
 ### Changed
